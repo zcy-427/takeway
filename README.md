@@ -36,3 +36,8 @@ spring:
     url: jdbc:mysql://localhost:3306/your_database
     username: your_username
     password: your_password
+
+### 4. 运行项目
+```bash
+mvn clean install
+mvn spring-boot:run
