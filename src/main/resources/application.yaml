@@ -8,4 +8,9 @@ spring:
       driver-class-name: com.mysql.cj.jdbc.Driver
       # 本地 MySQL 用户名
       username: root
-      password: xxxxxx
+      password: 200695zcy
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
