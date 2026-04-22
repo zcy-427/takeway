@@ -1,5 +1,6 @@
 package com.example.takeway.firstspringboot.controller; // 注意包名
 
+import com.example.takeway.firstspringboot.common.Result;
 import com.example.takeway.firstspringboot.dto.CreateOrderDTO;
 import com.example.takeway.firstspringboot.entity.Orders;
 import com.example.takeway.firstspringboot.service.OrdersService; // 确保导入你自己的Service
@@ -21,7 +22,7 @@ public class OrderController {
 
     // 专门处理 POST 请求
     @PostMapping
-    public String createOrder(@RequestBody CreateOrderDTO dto, HttpServletRequest request) {
+    public Result<String> createOrder(@RequestBody CreateOrderDTO dto, HttpServletRequest request) {
         System.out.println("====== 收到前端发来的新订单！ ======");
 //        System.out.println("下单用户ID: " + dto.getUserId());
 //        System.out.println("购买的菜品ID: " + dto.getProductId());
@@ -32,7 +33,7 @@ public class OrderController {
 
         //扣除库存、计算总金额、生成订单号、保存订单到数据库等一系列操作
         orderService.createOrder(realUserId, dto.getProductId(), dto.getAddress(), dto.getRemark());
-        return "恭喜！下单成功！";
+        return Result.success("订单创建成功！",null) ;
     }
 
     // 专门处理 GET 请求，查询订单详情

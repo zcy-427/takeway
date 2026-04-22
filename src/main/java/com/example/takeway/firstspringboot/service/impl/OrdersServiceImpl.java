@@ -10,14 +10,18 @@ import com.example.takeway.firstspringboot.mapper.ProductMapper;
 import com.example.takeway.firstspringboot.service.OrdersService;
 import com.example.takeway.firstspringboot.mapper.OrdersMapper;
 import com.example.takeway.firstspringboot.vo.OrderVO;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
 * @author zcy
@@ -31,23 +35,75 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper, Orders>
     private final OrdersMapper ordersMapper;
     private final OrderItemMapper orderItemMapper;
 
+    private final RedissonClient redissonClient;
+    private final TransactionTemplate transactionTemplate;
+
     //构造器注入
-    public OrdersServiceImpl(ProductMapper productMapper, OrdersMapper ordersMapper, OrderItemMapper orderItemMapper) {
+    public OrdersServiceImpl(ProductMapper productMapper, OrdersMapper ordersMapper, OrderItemMapper orderItemMapper,RedissonClient redissonClient,
+                             TransactionTemplate transactionTemplate) {
         this.productMapper = productMapper;
         this.ordersMapper = ordersMapper;
         this.orderItemMapper = orderItemMapper;
+        this.redissonClient=redissonClient;
+        this.transactionTemplate=transactionTemplate;
     }
 
-    //开启事务保护
-    @Transactional
+
     public void createOrder(Long userId, Long productId,String address,String remark) {
-        //查询点的菜的信息
-        Product product=productMapper.selectById(productId);
-        if(product==null)
-        {
+        // 1. 打造专属门锁
+        String lockKey = "lock:product:" + productId;
+        RLock lock = redissonClient.getLock(lockKey);
+
+        try {
+            // 2. 尝试拿钥匙：最多等 5 秒，拿到锁后保护 30 秒
+            boolean isLocked = lock.tryLock(5, 30, TimeUnit.SECONDS);
+            if (!isLocked) {
+                // 直接在这里把 9999 个人拦住，绝不让他们碰到 MySQL！
+                throw new RuntimeException("抢购太火爆啦，系统排队中，请稍后再试！");
+            }
+
+            System.out.println("====== VIP " + userId + " 挤进大门，进入绝对安全的结账区！ ======");
+
+            // 3. 极其关键：拿到了锁之后，再手动开启数据库事务！
+            transactionTemplate.executeWithoutResult(status -> {
+                try {
+                    // 执行核心扣减逻辑
+                    executeCoreOrderLogic(userId, productId, address, remark);
+                } catch (Exception e) {
+                    status.setRollbackOnly(); // 发生异常，回滚这一个人的事务
+                    throw e;
+                }
+            });
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("排队被挤出去了，请重试！");
+        } finally {
+            // 4. 无论如何，归还钥匙
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+                System.out.println("====== VIP " + userId + " 结账完毕，交还大门钥匙！ ======");
+            }
+        }
+    }
+
+    private void executeCoreOrderLogic(Long userId, Long productId, String address, String remark) {
+        // 1. 查菜品信息 (这里查的是内存态的快照)
+        Product product = productMapper.selectById(productId);
+        if (product == null) {
             throw new RuntimeException("抱歉，您点的菜品不存在！");
         }
-        // 2.生成订单（此时数据暂存在事务日志中，并未真正持久化）
+        if (product.getStock() <= 0) {
+            throw new RuntimeException("手慢了，已被抢空！");
+        }
+
+        // 2. 🚨 使用你手写的终极 SQL 扣减库存 (双保险)
+        int affectedRows = productMapper.reduceStock(productId, 1);
+        if (affectedRows == 0) {
+            throw new RuntimeException("手慢了，烤鸭已被抢空！");
+        }
+
+        // 3. 生成订单主表
         Orders order = new Orders();
         order.setUserId(userId);
         order.setStatus(1); // 待支付
@@ -55,14 +111,13 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper, Orders>
         order.setOrderNo(orderNo);
         order.setAddress(address);
         order.setRemark(remark);
-        //获取订单总金额
         order.setTotalAmount(product.getPrice());
         Date now = new Date();
         order.setCreateTime(now);
         order.setUpdateTime(now);
+        ordersMapper.insert(order);
 
-        //3.生成快照订单
-
+        // 4. 生成订单明细快照
         OrderItem orderItem = new OrderItem();
         orderItem.setOrderNo(orderNo);
         orderItem.setProductId(productId);
@@ -72,20 +127,7 @@ public class OrdersServiceImpl extends ServiceImpl<OrdersMapper, Orders>
         orderItem.setCreateTime(now);
         orderItem.setUpdateTime(now);
         orderItemMapper.insert(orderItem);
-
-        //4.订单入库
-        ordersMapper.insert(order);
-
-        //5.扣减库存
-        int affectedRows = productMapper.reduceStock(productId, 1);
-
-        if (affectedRows == 0) {
-            // 极其重要：如果返回 0，说明刚才的 WHERE stock >= 1 条件没满足，库存已经被别人抢光了！
-            // 此时必须主动抛出异常，触发 @Transactional 机制，把第 1 步插入的订单回滚掉！
-            throw new RuntimeException("手慢了，烤鸭已被抢空！");
-        }
     }
-
     @Override
     public OrderVO getOrderByNo(String orderNo) {
         LambdaQueryWrapper<Orders> orderWrapper = new LambdaQueryWrapper<>();
