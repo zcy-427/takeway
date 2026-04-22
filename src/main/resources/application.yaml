@@ -14,3 +14,8 @@ spring:
       host: localhost
       port: 6379
       database: 0
+  rabbitmq:
+    host: localhost
+    port: 5672     # 这是代码通讯端口（15672 是你刚才看的网页端口）
+    username: guest
+    password: guest
