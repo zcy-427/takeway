@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # 1. 启动 MySQL 冷库
+  mysql-server:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/mysql:8.0
+    container_name: takeway-mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "200695zcy"
+      MYSQL_DATABASE: "takeway_db"
+
+  # 2. 启动 Redis 大堂
+  redis-server:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/redis:latest
+    container_name: takeway-redis
+    ports:
+      - "6379:6379"
+
+  # 3. 启动 RabbitMQ 邮局
+  mq-server:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/rabbitmq:3-management
+    container_name: takeway-mq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # 4. 启动核心战车
+  takeway-app:
+    build: .
+    container_name: takeway-backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql-server
+      - redis-server
+      - mq-server
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql-server:3306/takeway_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai"
+      SPRING_DATA_REDIS_HOST: "redis-server"
+      SPRING_RABBITMQ_HOST: "mq-server"
