@@ -1,53 +1,42 @@
-# Takeaway-V2: 企业级高并发外卖交易与鉴权系统
+# Takeaway-V4: 企业级高并发外卖核心架构实战
 
-本项目是一个基于 Spring Boot 3.x 构建的高性能外卖核心后端微服务。项目不仅完成了标准化的交易链路与 JWT 安全鉴权，更重点针对**高并发抢购（秒杀）场景**进行了深度架构演进，完美解决了多线程环境下的“超卖”灾难，并实现了企业级的全局异常接管与 API 规范。
+本项目是一个基于 Spring Boot 3.x 构建的高性能外卖核心后端微服务。经历了多次架构演进，项目彻底告别了传统的单机同步 CRUD 模式，深度整合了 **Redis 缓存旁路**与 **RabbitMQ 消息队列**，构建了一套足以应对“双十一”级别高并发洪峰的“高吞吐、强一致、零超卖”的现代微服务架构。
 
-## 🌟 核心架构亮点 (Core Highlights)
+## 🌟 核心架构亮点 (Core Architecture Highlights)
 
-- ⚡ **千万级并发防超卖体系（核心）**：
-  构建了坚不可摧的三道防线：
-  1. **前置漏斗**：引入 `Redisson` 分布式锁，极速拦截无效洪峰流量。
-  2. **中置包裹**：弃用具有“幻读”隐患的 `@Transactional` 注解，改用 `TransactionTemplate` 编程式事务。精准控制“拿锁 -> 开事务 -> 扣库存 -> 提交事务 -> 释放锁”的绝对执行顺序，彻底根除高并发下的事务提交延迟问题。
-  3. **底层兜底**：手写 MyBatis 乐观锁安全扣减 SQL (`stock = stock - 1 WHERE stock >= 1`)，实现数据库级别的绝对防御。
+### 1. 🌪️ 读优化：Redis 缓存旁路模式 (Cache Aside)
+- **百倍 QPS 提升**：针对外卖系统中“读多写少”的菜单浏览场景，引入 Redis 作为大堂级缓存。拦截 99% 的数据库穿透请求，实现内存级极速响应。
+- **一致性保障**：配合 `ObjectMapper` 实现 JSON 序列化存储。提供 `/flush-cache` 缓存失效接口，在 CUD (增删改) 动作时主动撕毁旧缓存，保障 Cache 与 MySQL 之间的数据最终一致性。
 
-- 📦 **企业级 API 规范与全局兜底**：
-  弃用原生的 500 报错页面，引入 `@RestControllerAdvice` 构建全局异常处理器（GlobalExceptionHandler）。统一步装标准 `Result<T>` 响应体，将所有业务异常转化为优雅的 JSON 返回，提供极其丝滑的前后端对接体验。
+### 2. 🚀 写优化：RabbitMQ 异步解耦与削峰填谷
+- **彻底告别同步阻塞**：重构核心下单链路，Tomcat 网关（Controller）仅负责校验并投递 `OrderMessageDTO` 到 RabbitMQ，实现毫秒级“排队”响应。
+- **后台平滑消费**：引入 `@RabbitListener` 作为后台大厨，根据服务器真实吞吐极限平滑拉取订单。彻底解决瞬时 10 万级洪峰流量导致的 Tomcat 线程爆满与 OOM 宕机危机。
 
-- 🛡️ **无状态 JWT 鉴权闭环**：
-  手写全局请求拦截器（Interceptor），配合 Auth0 JWT 实现无状态登录。通过 `HttpServletRequest` 隐式传递 `currentUserId` 贯穿整个请求链路，彻底封杀了前端伪造 JSON ID 的“越权下单”漏洞。
+### 3. 🛡️ 千万级并发防超卖体系 (绝对防御)
+- **前置漏斗**：依托 `Redisson` 分布式锁，极速拦截无效洪峰，保障同一商品的单线程扣减环境。
+- **中置包裹**：摒弃有“幻读”隐患的 `@Transactional` 注解，改用 `TransactionTemplate` 编程式事务。精准控制“拿锁 -> 开事务 -> 扣库 -> 提交事务 -> 释放锁”的绝对安全生命周期。
+- **底层兜底**：手写 MyBatis 乐观锁级别安全 SQL (`stock = stock - 1 WHERE stock >= 1`)，构筑数据落盘的最后一道坚固防线。
 
-- 🔐 **密码学级别安全护城河**：
-  告别明文存储，集成 `jBcrypt` 算法对用户密码进行不可逆的加盐哈希（Hash）处理。从数学层面确保即使发生极端的数据库泄露（脱库），用户的真实密码依然绝对安全。
-
-- 🧱 **DTO/VO 领域防腐与视图隔离**：
-  严格推行数据传输对象（DTO）与视图对象（VO）架构。精准控制入参边界，拦截多余的非法参数；并在出参时严格脱敏内部隐私数据（如主键 ID、历史快照价格等）。
+### 4. 🔐 企业级零信任安全与 API 规范
+- **密码学粉碎机**：集成 `jBcrypt` 实现密码的不可逆加盐哈希（Hash），从数学层面免疫数据库脱库造成的明文泄露。
+- **无状态门禁**：基于 Auth0 JWT + 自定义 `HandlerInterceptor` 拦截器，实现全链路无状态鉴权与请求级 `UserId` 隐式透传，防范前端伪造越权。
+- **优雅兜底**：基于 `@RestControllerAdvice` 构建全局异常处理器，统一封装标准 `Result<T>` 泛型响应体，提供极其丝滑的前后端对接体验。
 
 ## 🛠️ 技术栈 (Tech Stack)
 
 - **核心框架**：Spring Boot 3.2.x
-- **持久层**：MyBatis-Plus + MySQL 8.0
-- **高并发与锁**：Redis + Redisson 3.27.x
-- **安全体系**：jBcrypt (密码哈希) / Auth0 JWT (无状态令牌)
-- **工程化**：Lombok / Maven / Postman (并发压测)
+- **持久层架构**：MyBatis-Plus 3.5.7 + MySQL 8.0
+- **中间件集群**：
+  - **Redis + Redisson 3.27** (分布式锁 & 数据缓存)
+  - **RabbitMQ (AMQP)** (异步解耦 & 消息队列)
+- **安全与工具**：jBcrypt / Auth0 JWT / Jackson / Lombok
 
-## 🚀 快速启动 (Quick Start)
+## 🚀 极速启动 (Quick Start)
 
-### 1. 环境准备
-确保本机已安装 JDK 17+, MySQL 8.0, Maven 3.8+，以及 **Redis** (推荐使用 Docker 极速部署：`docker run -d -p 6379:6379 redis`)。
-
-### 2. 数据库初始化
-在 MySQL 中创建数据库 `takeway_db`，并运行相关 SQL 脚本创建 `user`, `product`, `orders`, `order_item` 等表，并插入测试菜品数据。
-
-### 3. 修改配置
-请检查 `src/main/resources/application.yaml`，确保数据库与 Redis 密码及端口正确：
-```yaml
-spring:
-  datasource:
-    url: jdbc:mysql://localhost:3306/takeway_db?...
-    username: root
-    password: your_password
-  data:
-    redis:
-      host: localhost
-      port: 6379
-```
+### 1. 基础设施准备 (Docker 极速部署)
+确保本机已安装 JDK 17+ 与 Maven 3.8+，并启动必要的基础设施：
+```bash
+# 启动 Redis
+docker run -d --name my-redis -p 6379:6379 redis
+# 启动 RabbitMQ (带可视化管理后台)
+docker run -d --name my-rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
