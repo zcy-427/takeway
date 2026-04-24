@@ -1,42 +1,73 @@
-# Takeaway-V4: 企业级高并发外卖核心架构实战
+Takeaway-Pro: 企业级高吞吐量外卖核心交易架构
+本项目是一个基于 Spring Boot 3.3 构建的高性能外卖后端系统。项目经历了从单体 CRUD 到分布式架构的深度演进，重点解决了高并发下的数据一致性、数据库抗压能力以及服务的容器化快速部署。
 
-本项目是一个基于 Spring Boot 3.x 构建的高性能外卖核心后端微服务。经历了多次架构演进，项目彻底告别了传统的单机同步 CRUD 模式，深度整合了 **Redis 缓存旁路**与 **RabbitMQ 消息队列**，构建了一套足以应对“双十一”级别高并发洪峰的“高吞吐、强一致、零超卖”的现代微服务架构。
+🏗️ 核心架构演进 (Key Innovations)
+1. 🚀 读优化：Redis 旁路缓存 (Cache Aside)
+缓存命中逻辑：针对菜单浏览请求，实现“先查 Redis、未命中回查 MySQL、异步回写 Redis”的经典链路。
 
-## 🌟 核心架构亮点 (Core Architecture Highlights)
+性能提升：将高频菜单查询从磁盘 I/O 转化为内存读取，QPS 提升 100 倍以上，彻底解放 MySQL。
 
-### 1. 🌪️ 读优化：Redis 缓存旁路模式 (Cache Aside)
-- **百倍 QPS 提升**：针对外卖系统中“读多写少”的菜单浏览场景，引入 Redis 作为大堂级缓存。拦截 99% 的数据库穿透请求，实现内存级极速响应。
-- **一致性保障**：配合 `ObjectMapper` 实现 JSON 序列化存储。提供 `/flush-cache` 缓存失效接口，在 CUD (增删改) 动作时主动撕毁旧缓存，保障 Cache 与 MySQL 之间的数据最终一致性。
+一致性保障：提供专用的缓存失效接口 /product/flush-cache，确保菜品更新时缓存的实时同步。
 
-### 2. 🚀 写优化：RabbitMQ 异步解耦与削峰填谷
-- **彻底告别同步阻塞**：重构核心下单链路，Tomcat 网关（Controller）仅负责校验并投递 `OrderMessageDTO` 到 RabbitMQ，实现毫秒级“排队”响应。
-- **后台平滑消费**：引入 `@RabbitListener` 作为后台大厨，根据服务器真实吞吐极限平滑拉取订单。彻底解决瞬时 10 万级洪峰流量导致的 Tomcat 线程爆满与 OOM 宕机危机。
+2. 🌪️ 写优化：RabbitMQ 异步解耦
+流量削峰：下单请求不再同步等待数据库写入，而是转化为 OrderMessageDTO 投递至 RabbitMQ 队列。
 
-### 3. 🛡️ 千万级并发防超卖体系 (绝对防御)
-- **前置漏斗**：依托 `Redisson` 分布式锁，极速拦截无效洪峰，保障同一商品的单线程扣减环境。
-- **中置包裹**：摒弃有“幻读”隐患的 `@Transactional` 注解，改用 `TransactionTemplate` 编程式事务。精准控制“拿锁 -> 开事务 -> 扣库 -> 提交事务 -> 释放锁”的绝对安全生命周期。
-- **底层兜底**：手写 MyBatis 乐观锁级别安全 SQL (`stock = stock - 1 WHERE stock >= 1`)，构筑数据落盘的最后一道坚固防线。
+解耦设计：Controller 仅需 1ms 即可返回“排队中”，复杂的业务逻辑由 OrderListener 在后台平稳消费处理。
 
-### 4. 🔐 企业级零信任安全与 API 规范
-- **密码学粉碎机**：集成 `jBcrypt` 实现密码的不可逆加盐哈希（Hash），从数学层面免疫数据库脱库造成的明文泄露。
-- **无状态门禁**：基于 Auth0 JWT + 自定义 `HandlerInterceptor` 拦截器，实现全链路无状态鉴权与请求级 `UserId` 隐式透传，防范前端伪造越权。
-- **优雅兜底**：基于 `@RestControllerAdvice` 构建全局异常处理器，统一封装标准 `Result<T>` 泛型响应体，提供极其丝滑的前后端对接体验。
+3. 🛡️ 交易安全：Redisson + 编程式事务 (零超卖)
+分布式锁：引入 Redisson 实现细粒度商品锁，彻底拦截无效并发。
 
-## 🛠️ 技术栈 (Tech Stack)
+编程式事务：弃用 @Transactional，改用 TransactionTemplate 精准控制事务在锁释放前提交，从底层杜绝由于事务提交延迟导致的超卖幻读。
 
-- **核心框架**：Spring Boot 3.2.x
-- **持久层架构**：MyBatis-Plus 3.5.7 + MySQL 8.0
-- **中间件集群**：
-  - **Redis + Redisson 3.27** (分布式锁 & 数据缓存)
-  - **RabbitMQ (AMQP)** (异步解耦 & 消息队列)
-- **安全与工具**：jBcrypt / Auth0 JWT / Jackson / Lombok
+安全扣减：配合 MyBatis 乐观锁 SQL stock >= #{num}，构建数据一致性的最后防线。
 
-## 🚀 极速启动 (Quick Start)
+4. 🐳 容器化编排：Docker Compose 一键启停
+全栈编排：通过 docker-compose.yml 一键集成 MySQL 8.0、Redis、RabbitMQ 3-Management 及 Spring Boot 应用。
 
-### 1. 基础设施准备 (Docker 极速部署)
-确保本机已安装 JDK 17+ 与 Maven 3.8+，并启动必要的基础设施：
-```bash
-# 启动 Redis
-docker run -d --name my-redis -p 6379:6379 redis
-# 启动 RabbitMQ (带可视化管理后台)
-docker run -d --name my-rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+动态环境：利用 Docker 环境变量动态覆盖 Spring 配置，实现同一套 Jar 包在不同环境的无缝迁移。
+
+🛠️ 技术栈 (Technology Stack)
+核心框架：Spring Boot 3.3.5
+
+持久层：MyBatis-Plus 3.5.7 + MySQL 8.0
+
+中间件：
+
+Redis：缓存菜单数据
+
+Redisson：分布式锁控制并发
+
+RabbitMQ：订单请求异步化
+
+安全与规范：
+
+JWT：基于 Auth0 实现无状态鉴权
+
+BCrypt：密码加盐哈希存储
+
+GlobalException：全局统一异常拦截与标准响应体封装
+
+🚀 快速启动 (One-Click Deployment)
+1. 编译打包
+在项目根目录下，使用 Maven 将项目打成 Jar 包：
+
+Bash
+mvn clean package
+2. 启动全栈服务
+通过 Docker Compose 一键构建镜像并启动所有容器：
+
+Bash
+docker-compose up -d --build
+注意：项目已配置华为云高速镜像节点，确保国内环境下镜像拉取秒级完成。
+
+3. 数据库初始化
+连接 localhost:3307 (Docker 映射端口)。
+
+执行 SQL 脚本初始化 user, product, orders, order_item 表。
+
+🧪 架构验证 (Verification)
+缓存测试：访问 /product/list，观察控制台输出 🟢 缓存命中 或 🔴 缓存未命中。
+
+压测验证：使用 Postman 开启 50 并发下单，观察 RabbitMQ 后台 order.queue 的消息堆积与平滑消费过程。
+
+安全
